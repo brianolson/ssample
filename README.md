@@ -18,7 +18,24 @@ curl 'localhost:4422/?t=1'
 curl 'localhost:4422/?p=1'
 ```
 
-## Install:
+## Usage
+
+```
+$ ./ssample --help
+Usage of ./ssample:
+  -a string
+    	also append all input to file
+  -echo
+    	also write all lines to stdout as they happen
+  -http string
+    	host:port (or :port) to serve http on
+  -l int
+    	keep this many lines, uniformly sampled across all input (default 100)
+  -teez string
+    	also write all input to file (gzipped)
+```
+
+## Install
 
 ```sh
 go install github.com/brianolson/ssample@latest
