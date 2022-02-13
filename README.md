@@ -17,3 +17,9 @@ curl 'localhost:4422/?t=1'
 # fetch plain lines "{line}\n"
 curl 'localhost:4422/?p=1'
 ```
+
+## Install:
+
+```sh
+go install github.com/brianolson/ssample@latest
+```
