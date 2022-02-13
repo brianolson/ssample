@@ -2,9 +2,11 @@ package main
 
 import (
 	"bufio"
+	"compress/gzip"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"math/rand"
 	"net/http"
 	"os"
@@ -113,8 +115,16 @@ func gogently(c chan os.Signal) {
 	gcond.Broadcast()
 }
 
-func reader(c *Collector) {
-	defer gcond.Broadcast()
+func reader(c *Collector, tee io.Writer, echo bool) {
+	defer func() {
+		if tee != nil {
+			wc, ok := tee.(io.WriteCloser)
+			if ok {
+				wc.Close()
+			}
+		}
+		gcond.Broadcast()
+	}()
 	in := bufio.NewScanner(os.Stdin)
 	for in.Scan() {
 		xs := atomic.LoadUint32(&shouldquit)
@@ -122,7 +132,14 @@ func reader(c *Collector) {
 			fmt.Fprintf(os.Stderr, "got interrupt\n")
 			return
 		}
-		c.AddLine(in.Text())
+		line := in.Text()
+		if tee != nil {
+			fmt.Fprintf(tee, "%s\n", line)
+		}
+		if echo {
+			fmt.Fprintf(os.Stdout, "%s\n", line)
+		}
+		c.AddLine(line)
 	}
 	fmt.Fprintf(os.Stderr, "stdin exhausted: %v", in.Err())
 }
@@ -174,18 +191,45 @@ func (s *ssampleServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func maybefail(err error, xf string, args ...interface{}) {
+	if err == nil {
+		return
+	}
+	fmt.Fprintf(os.Stderr, xf, args...)
+	os.Exit(1)
+}
+
 func main() {
 	var c Collector
+	var teef io.Writer
 
 	var haddr string
+	var tee string
+	var teez string
+	var echo bool
 	flag.StringVar(&haddr, "http", "", "host:port (or :port) to serve http on")
 	flag.IntVar(&c.LinesToKeep, "l", 100, "keep this many lines, uniformly sampled across all input")
+	flag.StringVar(&tee, "a", "", "also append all input to file")
+	flag.StringVar(&teez, "teez", "", "also write all input to file (gzipped)")
+	flag.BoolVar(&echo, "echo", false, "also write all lines to stdout as they happen")
 	flag.Parse()
+
+	var err error
+	if tee != "" {
+		teef, err = os.OpenFile(tee, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+		maybefail(err, "%s: %v\n", tee, err)
+	} else if teez != "" {
+		// sadly gzip doesn't append
+		rawf, err := os.OpenFile(teez, os.O_CREATE|os.O_WRONLY, 0644)
+		maybefail(err, "%s: %v\n", teez, err)
+		defer rawf.Close()
+		teef = gzip.NewWriter(rawf)
+	}
 
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, os.Interrupt)
 	go gogently(sigs)
-	go reader(&c)
+	go reader(&c, teef, echo)
 	if haddr != "" {
 		server := ssampleServer{&c}
 		hs := http.Server{
