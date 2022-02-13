@@ -12,6 +12,7 @@ import (
 	"sort"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 type Collector struct {
@@ -32,7 +33,7 @@ func (c *Collector) AddLine(line string) {
 	c.l.Lock()
 	defer c.l.Unlock()
 	if c.rng == nil {
-		c.rng = rand.New(rand.NewSource(rand.Int63()))
+		c.rng = rand.New(rand.NewSource(time.Now().Unix()))
 	}
 	keep := len(c.lines) < c.LinesToKeep
 	if !keep {
@@ -126,6 +127,17 @@ func reader(c *Collector) {
 	fmt.Fprintf(os.Stderr, "stdin exhausted: %v", in.Err())
 }
 
+var falseish []string = []string{"", "f", "F", "False", "FALSE", "false", "0"}
+
+func boolish(s string) bool {
+	for _, v := range falseish {
+		if v == s {
+			return false
+		}
+	}
+	return true
+}
+
 type ssampleServer struct {
 	c *Collector
 }
@@ -136,17 +148,30 @@ type LineNoResponse struct {
 }
 
 func (s *ssampleServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	textmode := boolish(r.FormValue("t"))
+	plainmode := boolish(r.FormValue("p"))
 	var out LineNoResponse
 	out.Lines, out.LineNumbers = s.c.LinesAndNumbers()
-	blob, err := json.Marshal(out)
-	if err != nil {
-		w.Header().Set("Content-Type", "text/plain")
-		w.WriteHeader(500)
-		fmt.Fprintf(w, "json err: %v", err)
-		return
+	if plainmode {
+		for _, line := range out.Lines {
+			fmt.Fprintf(w, "%s\n", line)
+		}
+	} else if textmode {
+		for i, ln := range out.LineNumbers {
+			fmt.Fprintf(w, "%d\t%s\n", ln, out.Lines[i])
+		}
+	} else {
+		// json
+		blob, err := json.Marshal(out)
+		if err != nil {
+			w.Header().Set("Content-Type", "text/plain")
+			w.WriteHeader(500)
+			fmt.Fprintf(w, "json err: %v", err)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(blob)
 	}
-	w.Header().Set("Content-Type", "application/json")
-	w.Write(blob)
 }
 
 func main() {
@@ -174,6 +199,6 @@ func main() {
 	globalm.Unlock()
 	lines, nos := c.LinesAndNumbers()
 	for i, ln := range nos {
-		fmt.Printf("%d\t%s\n", ln, string(lines[i]))
+		fmt.Printf("%d\t%s\n", ln, lines[i])
 	}
 }
