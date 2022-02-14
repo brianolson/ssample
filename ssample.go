@@ -37,16 +37,13 @@ func (c *Collector) AddLine(line string) {
 	if c.rng == nil {
 		c.rng = rand.New(rand.NewSource(time.Now().Unix()))
 	}
-	keep := len(c.lines) < c.LinesToKeep
-	if !keep {
-		//if c.rng.Float64() < 1/c.linesSeen {
-		keep = (c.rng.Float64() * float64(c.linesSeen)) < 1
-	}
-	if keep {
-		if len(c.lines) < c.LinesToKeep {
-			c.lines = append(c.lines, line)
-			c.lineNumbers = append(c.lineNumbers, c.linesSeen)
-		} else {
+	if len(c.lines) < c.LinesToKeep {
+		c.lines = append(c.lines, line)
+		c.lineNumbers = append(c.lineNumbers, c.linesSeen)
+	} else {
+		rf := c.rng.Float64()
+		keep := rf < (float64(c.LinesToKeep-1) / float64(c.linesSeen))
+		if keep {
 			evict := c.rng.Intn(len(c.lines))
 			c.lines[evict] = line
 			c.lineNumbers[evict] = c.linesSeen
@@ -54,6 +51,12 @@ func (c *Collector) AddLine(line string) {
 	}
 
 	c.linesSeen++
+}
+
+func (c *Collector) Seen() int {
+	c.l.Lock()
+	defer c.l.Unlock()
+	return c.linesSeen
 }
 
 // LinesUnordered returns a copy of the collected lines
@@ -162,6 +165,7 @@ type ssampleServer struct {
 type LineNoResponse struct {
 	Lines       []string `json:"lines"`
 	LineNumbers []int    `json:"lineNumbers"`
+	LinesSeen   int      `json:"seen"`
 }
 
 func (s *ssampleServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -169,6 +173,7 @@ func (s *ssampleServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	plainmode := boolish(r.FormValue("p"))
 	var out LineNoResponse
 	out.Lines, out.LineNumbers = s.c.LinesAndNumbers()
+	out.LinesSeen = s.c.Seen()
 	if plainmode {
 		for _, line := range out.Lines {
 			fmt.Fprintf(w, "%s\n", line)
